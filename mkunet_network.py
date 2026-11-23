@@ -481,7 +481,7 @@ class MK_UNet_S(nn.Module):
         
 class MK_UNet(nn.Module):
 
-    def __init__(self,  num_classes=1, in_channels=3, channels=[16,32,64,96,160], depths=[1, 1, 1, 1, 1], kernel_sizes=[1,3,5], expansion_factor=2, gag_kernel=3, **kwargs):
+    def __init__(self,  num_classes=1, in_channels=3, channels=[16,32,64,96,160], depths=[1, 1, 1, 1, 1], kernel_sizes=[1,3,5], expansion_factor=2, gag_kernel=3, diagonal_skips=False, **kwargs):
         super().__init__()
         
         self.encoder1 = mk_irb_bottleneck(in_channels, channels[0], depths[0], 1, expansion_factor=expansion_factor, dw_parallel=True, add=True, kernel_sizes=kernel_sizes)
@@ -514,6 +514,17 @@ class MK_UNet(nn.Module):
         self.out3 = nn.Conv2d(channels[0], num_classes, kernel_size=1)
         self.out4 = nn.Conv2d(channels[0], num_classes, kernel_size=1)
 
+        self.diagonal_skips = diagonal_skips
+
+        # Diagonal skips: a gated copy from one encoder level above each decoder stage
+        if diagonal_skips:
+            self.convert1 = nn.Conv2d(channels[2], channels[3], kernel_size=1, bias=False)
+            self.convert2 = nn.Conv2d(channels[1], channels[2], kernel_size=1, bias=False)
+            self.convert3 = nn.Conv2d(channels[0], channels[1], kernel_size=1, bias=False)
+            self.DAG1 = GroupedAttentionGate(F_g=channels[3],F_l=channels[3],F_int=channels[3]//2, kernel_size=gag_kernel, groups=channels[3]//2)
+            self.DAG2 = GroupedAttentionGate(F_g=channels[2],F_l=channels[2],F_int=channels[2]//2, kernel_size=gag_kernel, groups=channels[2]//2)
+            self.DAG3 = GroupedAttentionGate(F_g=channels[1],F_l=channels[1],F_int=channels[1]//2, kernel_size=gag_kernel, groups=channels[1]//2)
+
     def forward(self, x):
 
         if x.shape[1]==1:
@@ -543,7 +554,14 @@ class MK_UNet(nn.Module):
         out = self.SA(out)*out
         out = F.relu(F.interpolate(self.decoder1(out),scale_factor=(2,2),mode ='bilinear')) 
         t4 = self.AG1(g=out,x=t4)
-        out = torch.add(out,t4)
+
+        if self.diagonal_skips:
+            diag1 = F.max_pool2d(t3, 2, 2)
+            diag1 = self.convert1(diag1)
+            diag1 = self.DAG1(g=out, x=diag1)
+            out = out + t4 + diag1
+        else:
+            out = torch.add(out, t4)
 
         ### Stage 3
         out = self.CA2(out)*out
@@ -551,14 +569,28 @@ class MK_UNet(nn.Module):
         out = F.relu(F.interpolate(self.decoder2(out),scale_factor=(2,2),mode ='bilinear')) 
         p1 = F.interpolate(self.out1(out),scale_factor=(8,8),mode ='bilinear')
         t3 = self.AG2(g=out,x=t3)
-        out = torch.add(out,t3)
+
+        if self.diagonal_skips:
+            diag2 = F.max_pool2d(t2, 2, 2)
+            diag2 = self.convert2(diag2)
+            diag2 = self.DAG2(g=out, x=diag2)
+            out = out + t3 + diag2
+        else:
+            out = torch.add(out, t3)
 
         out = self.CA3(out)*out
         out = self.SA(out)*out
         out = F.relu(F.interpolate(self.decoder3(out),scale_factor=(2,2),mode ='bilinear')) 
         p2 = F.interpolate(self.out2(out),scale_factor=(4,4),mode ='bilinear')
         t2 = self.AG3(g=out,x=t2)
-        out = torch.add(out,t2)
+
+        if self.diagonal_skips:
+            diag3 = F.max_pool2d(t1, 2, 2)
+            diag3 = self.convert3(diag3)
+            diag3 = self.DAG3(g=out, x=diag3)
+            out = out + t2 + diag3
+        else:
+            out = torch.add(out, t2)
 
         out = self.CA4(out)*out
         out = self.SA(out)*out
@@ -570,7 +602,7 @@ class MK_UNet(nn.Module):
         out = self.CA5(out)*out
         out = self.SA(out)*out
         out = F.relu(F.interpolate(self.decoder5(out),scale_factor=(2,2),mode ='bilinear')) 
-       
+
         p4 = self.out4(out)
 
         return [p4] #[p4, p3, p2, p1]
