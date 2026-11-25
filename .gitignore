@@ -2,3 +2,8 @@
 __pycache__/
 mkunet_original.py
 baseline_output.pt
+data/
+model_pth/
+logs/
+results_polyp/
+predictions_polyp/
