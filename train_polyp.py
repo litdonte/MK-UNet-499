@@ -180,6 +180,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_path', type=str, default=f'./data/polyp/target/{dataset_name}/train/')
     parser.add_argument('--test_path', type=str, default=f'./data/polyp/target/{dataset_name}/')
     parser.add_argument('--train_save', type=str, default='') 
+    parser.add_argument('--diagonal_skips', action='store_true')
     opt = parser.parse_args()
 
     # Network configuration mapping
@@ -205,8 +206,13 @@ if __name__ == '__main__':
         total_train_time = 0
 
         timestamp = time.strftime('%H%M%S')
-        run_id = (f"{dataset_name}_{chosen_net}_bs{opt.batchsize}_lr{opt.lr}_"
+        if opt.diagonal_skips:
+            run_id = (f"{dataset_name}_{chosen_net}_diagTrue_bs{opt.batchsize}_lr{opt.lr}_"
                       f"e{opt.epoch}_aug{opt.augmentation}_run{run}_t{timestamp}")
+        else:
+            run_id = (f"{dataset_name}_{chosen_net}_diagFalse_bs{opt.batchsize}_lr{opt.lr}_"
+                      f"e{opt.epoch}_aug{opt.augmentation}_run{run}_t{timestamp}")
+
         opt.train_save = f'./model_pth/{run_id}/'
         
         os.makedirs('logs', exist_ok=True)
@@ -220,7 +226,7 @@ if __name__ == '__main__':
 
         # Build model
         channels = NET_CONFIGS[chosen_net]
-        model = MK_UNet(num_classes=1, in_channels=3, channels=channels)
+        model = MK_UNet(num_classes=1, in_channels=3, channels=channels, diagonal_skips=opt.diagonal_skips)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         '''if torch.cuda.device_count() > 1:
@@ -229,7 +235,7 @@ if __name__ == '__main__':
 
         model.to(device)
 
-        print(f"Network: {chosen_net} | Channels: {channels}")
+        print(f"Network: {chosen_net} | Diagonal Skips: {opt.diagonal_skips} | Channels: {channels}")
         cal_params_flops(model, opt.img_size, logging)
         optimizer = torch.optim.AdamW(model.parameters(), opt.lr, weight_decay=1e-4)
         scheduler = CosineAnnealingLR(optimizer, T_max=opt.epoch, eta_min=1e-6)
